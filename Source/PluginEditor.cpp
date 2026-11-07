@@ -269,6 +269,11 @@ void HeavenLimitsAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("STEREO BRICKWALL MAXIMIZER", 200, 34, 500, 13, juce::Justification::centred);
     g.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
     g.drawText ("Powered By TILADCO", 200, 47, 500, 12, juce::Justification::centred);
+
+    // Lettering only, beneath the RMS/LUFS readouts; styled as an ornamental serif wordmark.
+    g.setColour (juce::Colour (0xffe3e8ed));
+    g.setFont (juce::Font ("Georgia", 20.0f, juce::Font::bold | juce::Font::italic));
+    g.drawText ("HomeSounds", 655, 330, 150, 42, juce::Justification::centred);
     g.setColour (juce::Colour (0x8843586d));
     g.drawLine (18, 65, 882, 65, 1);
     g.drawLine (18, 480, 882, 480, 1);
