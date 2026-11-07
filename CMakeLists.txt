@@ -31,6 +31,11 @@ juce_add_plugin(HeavenLimits
     COPY_PLUGIN_AFTER_BUILD FALSE
 )
 
+juce_add_binary_data(HeavenLimitsAssets
+    SOURCES
+        Assets/HomeSounds.png
+)
+
 juce_generate_juce_header(HeavenLimits)
 
 target_sources(HeavenLimits PRIVATE
@@ -49,6 +54,7 @@ target_compile_definitions(HeavenLimits PUBLIC
 target_link_libraries(HeavenLimits PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
+    HeavenLimitsAssets
     PUBLIC
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags

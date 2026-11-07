@@ -1,12 +1,45 @@
 #include "PluginEditor.h"
+#include <BinaryData.h>
 #include <cmath>
 
 namespace
 {
     const juce::Colour ink (0xff101820), red (0xffff3838), metalTop (0xffd8e3ee), metalDark (0xff718ba5);
-    const juce::Colour meterOrange (0xffff9f1c);
-    const juce::Colour meterMint (0xff35e0c1);
-    const juce::Colour meterViolet (0xffc33ce6);
+
+    juce::Image createHomeSoundsLogo()
+    {
+        auto source = juce::ImageCache::getFromMemory (BinaryData::HomeSounds_png, BinaryData::HomeSounds_pngSize);
+        if (source.isNull())
+            return {};
+
+        auto logo = source.convertedToFormat (juce::Image::ARGB);
+        int left = logo.getWidth(), top = logo.getHeight(), right = 0, bottom = 0;
+        for (int y = 0; y < logo.getHeight(); ++y)
+            for (int x = 0; x < logo.getWidth(); ++x)
+            {
+                const auto pixel = logo.getPixelAt (x, y);
+                const int brightness = (pixel.getRed() * 30 + pixel.getGreen() * 59 + pixel.getBlue() * 11) / 100;
+                if (brightness > 42)
+                {
+                    left = juce::jmin (left, x);
+                    top = juce::jmin (top, y);
+                    right = juce::jmax (right, x);
+                    bottom = juce::jmax (bottom, y);
+                }
+                // The uploaded logo has a dark background. Make those pixels transparent so only
+                // the original silver lettering is shown over the plugin's dark logo plate.
+                const auto alpha = (juce::uint8) juce::jlimit (0, 255, (brightness - 19) * 8);
+                logo.setPixelAt (x, y, juce::Colour::fromRGBA (pixel.getRed(), pixel.getGreen(), pixel.getBlue(), alpha));
+            }
+
+        if (right <= left || bottom <= top)
+            return {};
+
+        constexpr int padding = 12;
+        auto content = juce::Rectangle<int> (left, top, right - left + 1, bottom - top + 1)
+                           .expanded (padding).getIntersection (logo.getBounds());
+        return logo.getClippedImage (content);
+    }
 
     void setupLabel (juce::Label& label, const juce::String& text, float size = 10.0f)
     {
@@ -85,6 +118,7 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     styleKnob (multibandAmount, multibandLabel, "MULTIBAND AMOUNT", "%");
     styleKnob (noiseShaping, noiseLabel, "NOISE SHAPING", "%");
 
+    // ComboBoxAttachment maps parameter choice indices to item IDs starting at 1.
     oversampling.addItem ("1x", 1);
     oversampling.addItem ("2x", 2);
     oversampling.addItem ("4x", 3);
@@ -108,6 +142,8 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     for (auto* label : { &oversamplingLabel, &ditherLabel, &rmsLabel, &lufsLabel })
         addAndMakeVisible (*label);
 
+    // Monitor and meter reset remain available as processor parameters, but are intentionally
+    // omitted from this UI as requested. No audio processing or parameter behavior is changed here.
     for (auto* button : { &truePeak, &bypass, &multiband, &aes17, &isp })
         styleLedButton (*button);
 
@@ -151,6 +187,7 @@ void HeavenLimitsAudioProcessorEditor::styleKnob (juce::Slider& slider, juce::La
 {
     setupLabel (label, name, 10.0f);
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    // Use the separate value label below each knob; avoid a second JUCE textbox value.
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.setTextValueSuffix (suffix);
     addAndMakeVisible (slider);
@@ -218,7 +255,7 @@ void HeavenLimitsAudioProcessorEditor::LedMeter::paint (juce::Graphics& g)
     for (int i = 0; i < count; ++i)
     {
         const int fromBottom = count - 1 - i;
-        const auto colour = fromBottom > 15 ? meterOrange : fromBottom > 7 ? meterMint : meterViolet;
+        auto colour = fromBottom > 15 ? juce::Colour (0xff22d65b) : fromBottom > 7 ? juce::Colour (0xffd8e62d) : juce::Colour (0xffff493c);
         auto segment = juce::Rectangle<float> ((float) area.getX(), area.getY() + i * (h + gap), (float) area.getWidth(), h);
         g.setColour (i >= count - lit ? colour : juce::Colour (0xff28343e));
         g.fillRoundedRectangle (segment, 1.0f);
@@ -233,27 +270,7 @@ void HeavenLimitsAudioProcessorEditor::GainReductionMeter::paint (juce::Graphics
     g.setColour (juce::Colours::white); g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     g.drawText ("GAIN REDUCTION", getLocalBounds().removeFromTop (20), juce::Justification::centred);
     g.setColour (red); g.setFont (juce::Font (juce::FontOptions (22.0f, juce::Font::bold)));
-    g.drawText (juce::String (-reduction, 1) + " dB",
-                getLocalBounds().withTrimmedTop (18).withTrimmedBottom (22), juce::Justification::centred);
-
-    // 12-segment scale, 0-12 dB. Fill starts at the right and progresses to the left.
-    auto bar = bounds.reduced (9.0f, 0.0f).withHeight (10.0f).withY (bounds.getBottom() - 15.0f);
-    constexpr int segments = 12;
-    constexpr float segmentGap = 2.0f;
-    const float segmentWidth = (bar.getWidth() - segmentGap * (segments - 1)) / (float) segments;
-    const int active = juce::jlimit (0, segments, (int) std::round (reduction));
-    for (int i = 0; i < segments; ++i)
-    {
-        auto segment = juce::Rectangle<float> (bar.getX() + i * (segmentWidth + segmentGap), bar.getY(),
-                                                segmentWidth, bar.getHeight());
-        const int distanceFromRight = segments - 1 - i;
-        const auto colour = distanceFromRight < 4 ? meterViolet
-                          : distanceFromRight < 8 ? meterMint : meterOrange;
-        g.setColour (i >= segments - active ? colour : juce::Colour (0xff34323b));
-        g.fillRoundedRectangle (segment, 1.0f);
-        g.setColour (juce::Colour (0xff625a68));
-        g.drawRoundedRectangle (segment, 1.0f, 0.5f);
-    }
+    g.drawText (juce::String (-reduction, 1) + " dB", getLocalBounds().withTrimmedTop (18).withTrimmedBottom (12), juce::Justification::centred);
 }
 
 void HeavenLimitsAudioProcessorEditor::paint (juce::Graphics& g)
@@ -269,11 +286,6 @@ void HeavenLimitsAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawText ("STEREO BRICKWALL MAXIMIZER", 200, 34, 500, 13, juce::Justification::centred);
     g.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
     g.drawText ("Powered By TILADCO", 200, 47, 500, 12, juce::Justification::centred);
-
-    // Lettering only, beneath the RMS/LUFS readouts; styled as an ornamental serif wordmark.
-    g.setColour (juce::Colour (0xffe3e8ed));
-    g.setFont (juce::Font ("Georgia", 20.0f, juce::Font::bold | juce::Font::italic));
-    g.drawText ("HomeSounds", 655, 330, 150, 42, juce::Justification::centred);
     g.setColour (juce::Colour (0x8843586d));
     g.drawLine (18, 65, 882, 65, 1);
     g.drawLine (18, 480, 882, 480, 1);
@@ -301,6 +313,7 @@ void HeavenLimitsAudioProcessorEditor::resized()
     rmsLabel.setBounds (665, 250, 130, 14); rmsValue.setBounds (665, 265, 130, 18);
     lufsLabel.setBounds (665, 291, 130, 14); lufsValue.setBounds (665, 306, 130, 18);
 
+    // Utility controls are kept in two clear rows below the meters, not underneath them.
     constexpr int buttonHeight = 20;
     multiband.setBounds (130, 438, 160, buttonHeight);
     truePeak.setBounds (370, 438, 160, buttonHeight);
