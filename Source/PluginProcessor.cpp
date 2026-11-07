@@ -193,7 +193,6 @@ void HeavenLimitsAudioProcessor::processAtRate (juce::dsp::AudioBlock<float>& bl
 
             const float source = delaySamples == 0 ? sample[ch] : delayed;
             float out = source * state.gain;
-            // Final hard guard: the processed sample cannot exceed the configured sample-peak ceiling.
             if (std::abs (out) > ceilingLinear)
                 out = std::copysign (ceilingLinear, out);
             block.setSample ((size_t) ch, (size_t) n, out);
@@ -209,7 +208,8 @@ void HeavenLimitsAudioProcessor::updateMeters (const juce::AudioBuffer<float>& b
 {
     const int numChannels = juce::jmin (2, buffer.getNumChannels());
     const int numSamples = buffer.getNumSamples();
-    double blockRmsEnergy = 0.0;
+    double rmsAccumulator = 0.0;
+    double lufsAccumulator = 0.0;
     float peak = 0.0f;
 
     for (int n = 0; n < numSamples; ++n)
@@ -228,18 +228,16 @@ void HeavenLimitsAudioProcessor::updateMeters (const juce::AudioBuffer<float>& b
 
         const double channelCount = (double) juce::jmax (1, numChannels);
         const double sampleMeanSquare = sampleSquares / channelCount;
-        rmsEnergy = meterSmoothing * rmsEnergy + (1.0 - meterSmoothing) * sampleMeanSquare;
-        lufsEnergy = meterSmoothing * lufsEnergy + (1.0 - meterSmoothing) * weightedSquares;
-        blockRmsEnergy += sampleMeanSquare;
+        rmsAccumulator = meterSmoothing * rmsAccumulator + (1.0 - meterSmoothing) * sampleMeanSquare;
+        lufsAccumulator = meterSmoothing * lufsAccumulator + (1.0 - meterSmoothing) * weightedSquares;
     }
 
     inputPeak.store (inputPeakLinear);
     outputPeak.store (peak);
     if (numSamples > 0)
     {
-        rmsLevelDb.store ((float) (10.0 * std::log10 (juce::jmax (rmsEnergy, 1.0e-12))));
-        // K-weighted, 300 ms smoothed loudness estimate; gating is not applied.
-        lufsLevel.store ((float) (-0.691 + 10.0 * std::log10 (juce::jmax (lufsEnergy, 1.0e-12))));
+        rmsLevelDb.store ((float) (10.0 * std::log10 (juce::jmax (rmsAccumulator, 1.0e-12))));
+        lufsLevel.store ((float) (-0.691 + 10.0 * std::log10 (juce::jmax (lufsAccumulator, 1.0e-12))));
     }
 }
 
@@ -293,7 +291,6 @@ void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                            attack, release, lookahead, stereoLink);
         }
 
-        // The downsampling filter can create new sample peaks, so guard the final output too.
         const float ceilingLinear = juce::Decibels::decibelsToGain (safeCeiling);
         for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
             for (int n = 0; n < numSamples; ++n)

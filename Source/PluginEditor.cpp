@@ -6,6 +6,8 @@ namespace
     const juce::Colour metalDark (0xff718ba5);
     const juce::Colour ink (0xff101820);
     const juce::Colour red (0xffff3838);
+    const juce::Colour chrome (0xffdfe6ef);
+    const juce::Colour chromeDark (0xff727d8a);
 
     void drawScrew (juce::Graphics& g, juce::Point<float> c)
     {
@@ -25,6 +27,11 @@ namespace
         label.setColour (juce::Label::textColourId, ink);
         label.setFont (juce::Font (juce::FontOptions (size, juce::Font::bold)));
         label.setInterceptsMouseClicks (false, false);
+    }
+
+    float knobValueToAngle (float normalized)
+    {
+        return juce::jmap (normalized, 0.0f, 1.0f, -135.0f, 135.0f);
     }
 }
 
@@ -98,6 +105,7 @@ void HeavenLimitsAudioProcessorEditor::styleKnob (juce::Slider& slider, juce::La
     slider.setColour (juce::Slider::textBoxTextColourId, ink);
     slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0x667f9eb9));
     slider.setTextValueSuffix (suffix);
+    slider.setRotaryParameters (0.0f, 1.0f, 0.5f, 0.0f);
     addAndMakeVisible (slider);
     addAndMakeVisible (label);
 }
