@@ -6,8 +6,6 @@ namespace
     const juce::Colour metalDark (0xff718ba5);
     const juce::Colour ink (0xff101820);
     const juce::Colour red (0xffff3838);
-    const juce::Colour chrome (0xffdfe6ef);
-    const juce::Colour chromeDark (0xff727d8a);
 
     void drawScrew (juce::Graphics& g, juce::Point<float> c)
     {
@@ -28,11 +26,47 @@ namespace
         label.setFont (juce::Font (juce::FontOptions (size, juce::Font::bold)));
         label.setInterceptsMouseClicks (false, false);
     }
+}
 
-    float knobValueToAngle (float normalized)
+HeavenLimitsAudioProcessorEditor::VintageKnob::VintageKnob()
+{
+    setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+    setRotaryParameters (0.0, 1.0, 0.5);
+    setRange (-24.0, 24.0);
+}
+
+void HeavenLimitsAudioProcessorEditor::VintageKnob::paint (juce::Graphics& g)
+{
+    auto bounds = getLocalBounds().toFloat();
+    const auto centre = bounds.getCentre();
+    const auto radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f - 5.0f;
+
+    g.setGradientFill (juce::ColourGradient (juce::Colour (0xffdfe7ef), bounds.getX(), bounds.getY(),
+                                              juce::Colour (0xff686f7c), bounds.getRight(), bounds.getBottom(), false));
+    g.fillEllipse (bounds.reduced (2.0f));
+
+    g.setColour (juce::Colour (0xff1a1f27));
+    g.fillEllipse (centre.x - radius, centre.y - radius, radius * 2.0f, radius * 2.0f);
+
+    for (int i = 0; i < 60; ++i)
     {
-        return juce::jmap (normalized, 0.0f, 1.0f, -135.0f, 135.0f);
+        const auto angle = juce::MathConstants<float>::pi * 0.75f + (float) i / 60.0f * juce::MathConstants<float>::pi * 1.5f;
+        const auto inner = radius * 0.72f;
+        const auto outer = radius * 0.93f;
+        const auto a = centre + juce::Point<float> (std::cos (angle) * inner, std::sin (angle) * inner);
+        const auto b = centre + juce::Point<float> (std::cos (angle) * outer, std::sin (angle) * outer);
+        g.setColour (i % 6 == 0 ? juce::Colour (0xffe9eef3) : juce::Colour (0xff697989));
+        g.drawLine (juce::Line<float> (a, b), 1.5f);
     }
+
+    const auto percent = juce::jlimit (0.0, 1.0, getValue() / (getMaximum() - getMinimum()));
+    const auto angle = juce::jmap (percent, 0.0, 1.0, -juce::MathConstants<float>::pi * 0.75f, juce::MathConstants<float>::pi * 0.75f);
+    const auto pointerEnd = centre + juce::Point<float> (std::cos (angle) * (radius * 0.62f), std::sin (angle) * (radius * 0.62f));
+    g.setColour (juce::Colours::white);
+    g.drawLine (centre.x, centre.y, pointerEnd.x, pointerEnd.y, 2.0f);
+    g.setColour (juce::Colour (0xff909daa));
+    g.fillEllipse (centre.x - 9.0f, centre.y - 9.0f, 18.0f, 18.0f);
 }
 
 HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimitsAudioProcessor& p)
@@ -61,6 +95,10 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
 
     styleLedButton (truePeak);
     styleLedButton (bypass);
+    styleLedButton (multiband);
+    styleLedButton (monitor);
+    styleLedButton (aes17);
+    styleLedButton (isp);
 
     auto addValue = [this] (juce::Label& label)
     {
@@ -69,17 +107,20 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
         label.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
         addAndMakeVisible (label);
     };
+
     for (auto* label : { &inputValue, &ceilingValue, &attackValue, &releaseValue,
-                         &lookaheadValue, &stereoLinkValue, &rmsValue, &lufsValue })
+                         &lookaheadValue, &stereoLinkValue, &rmsValue, &lufsValue,
+                         &multibandValue, &ditherValue, &noiseValue })
         addValue (*label);
 
     setupLabel (rmsLabel, "RMS", 9.0f);
     setupLabel (lufsLabel, "LUFS (K-weighted)", 9.0f);
-    addAndMakeVisible (rmsLabel);
-    addAndMakeVisible (lufsLabel);
-    addAndMakeVisible (inputMeter);
-    addAndMakeVisible (outputMeter);
-    addAndMakeVisible (grMeter);
+    setupLabel (multibandLabel, "Multiband", 9.0f);
+    setupLabel (ditherLabel, "Dither", 9.0f);
+    setupLabel (noiseLabel, "Noise", 9.0f);
+    addAndMakeVisible (rmsLabel); addAndMakeVisible (lufsLabel);
+    addAndMakeVisible (multibandLabel); addAndMakeVisible (ditherLabel); addAndMakeVisible (noiseLabel);
+    addAndMakeVisible (inputMeter); addAndMakeVisible (outputMeter); addAndMakeVisible (grMeter);
 
     inputAttachment = std::make_unique<SliderAttachment> (processor.parameters, "input", inputGain);
     ceilingAttachment = std::make_unique<SliderAttachment> (processor.parameters, "ceiling", ceiling);
@@ -90,6 +131,12 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     oversamplingAttachment = std::make_unique<SliderAttachment> (processor.parameters, "oversampling", oversampling);
     truePeakAttachment = std::make_unique<ButtonAttachment> (processor.parameters, "truePeak", truePeak);
     bypassAttachment = std::make_unique<ButtonAttachment> (processor.parameters, "bypass", bypass);
+    multibandAttachment = std::make_unique<SliderAttachment> (processor.parameters, "multibandAmount", inputGain);
+    multibandBoolAttachment = std::make_unique<ButtonAttachment> (processor.parameters, "multiband", multiband);
+    monitorAttachment = std::make_unique<ButtonAttachment> (processor.parameters, "monitor", monitor);
+    aes17Attachment = std::make_unique<ButtonAttachment> (processor.parameters, "aes17", aes17);
+    ispAttachment = std::make_unique<ButtonAttachment> (processor.parameters, "isp", isp);
+    ditherAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ChoiceAttachment> (processor.parameters, "dither", oversampling);
     startTimerHz (20);
 }
 
@@ -105,7 +152,7 @@ void HeavenLimitsAudioProcessorEditor::styleKnob (juce::Slider& slider, juce::La
     slider.setColour (juce::Slider::textBoxTextColourId, ink);
     slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0x667f9eb9));
     slider.setTextValueSuffix (suffix);
-    slider.setRotaryParameters (0.0f, 1.0f, 0.5f, 0.0f);
+    slider.setRotaryParameters (0.0, 1.0, 0.5);
     addAndMakeVisible (slider);
     addAndMakeVisible (label);
 }
@@ -157,6 +204,9 @@ void HeavenLimitsAudioProcessorEditor::timerCallback()
     set (stereoLinkValue, (float) stereoLink.getValue(), 0, "%");
     set (rmsValue, processor.getRmsLevelDb(), 1, " dBFS");
     set (lufsValue, processor.getLufsLevel(), 1, " LUFS");
+    set (multibandValue, (float) multiband.getToggleState(), 0, "");
+    set (ditherValue, (float) oversampling.getValue(), 0, "");
+    set (noiseValue, (float) inputGain.getValue(), 0, "%");
 }
 
 void HeavenLimitsAudioProcessorEditor::LedMeter::paint (juce::Graphics& g)
@@ -268,6 +318,16 @@ void HeavenLimitsAudioProcessorEditor::resized()
     rmsValue.setBounds (590, 306, 100, 20);
     lufsLabel.setBounds (590, 332, 100, 16);
     lufsValue.setBounds (590, 348, 100, 20);
-    truePeak.setBounds (690, 300, 100, 30);
-    bypass.setBounds (690, 341, 100, 30);
+    multibandLabel.setBounds (690, 290, 100, 16);
+    multiband.setBounds (690, 300, 100, 30);
+    multibandValue.setBounds (690, 333, 100, 20);
+    ditherLabel.setBounds (690, 356, 100, 16);
+    ditherValue.setBounds (690, 372, 100, 20);
+    noiseLabel.setBounds (690, 395, 100, 16);
+    noiseValue.setBounds (690, 410, 100, 20);
+    truePeak.setBounds (790, 300, 100, 30);
+    bypass.setBounds (790, 341, 100, 30);
+    monitor.setBounds (790, 382, 100, 30);
+    aes17.setBounds (790, 420, 100, 30);
+    isp.setBounds (790, 458, 100, 30);
 }

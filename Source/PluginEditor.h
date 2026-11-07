@@ -13,6 +13,13 @@ public:
     void resized() override;
 
 private:
+    class VintageKnob : public juce::Slider
+    {
+    public:
+        VintageKnob();
+        void paint (juce::Graphics&) override;
+    };
+
     class LedMeter : public juce::Component
     {
     public:
@@ -45,20 +52,26 @@ private:
     void styleLedButton (LedToggleButton&);
 
     HeavenLimitsAudioProcessor& processor;
-    juce::Slider inputGain, ceiling, attack, release, lookahead, stereoLink, oversampling;
+    VintageKnob inputGain, ceiling, attack, release, lookahead, stereoLink;
+    juce::Slider oversampling;
     LedToggleButton truePeak { "TRUE PEAK" }, bypass { "BYPASS" };
+    LedToggleButton multiband { "MULTIBAND" }, monitor { "MONITOR" }, aes17 { "AES17" }, isp { "ISP" };
     juce::Label inputLabel, ceilingLabel, attackLabel, releaseLabel, lookaheadLabel,
-                  stereoLinkLabel, oversamplingLabel, rmsLabel, lufsLabel;
+                stereoLinkLabel, oversamplingLabel, rmsLabel, lufsLabel,
+                multibandLabel, ditherLabel, noiseLabel;
     juce::Label inputValue, ceilingValue, attackValue, releaseValue, lookaheadValue, stereoLinkValue,
-                  rmsValue, lufsValue;
+                rmsValue, lufsValue, multibandValue, ditherValue, noiseValue;
     LedMeter inputMeter { "INPUT" }, outputMeter { "OUTPUT" };
     GainReductionMeter grMeter;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<SliderAttachment> inputAttachment, ceilingAttachment, attackAttachment,
-        releaseAttachment, lookaheadAttachment, stereoLinkAttachment, oversamplingAttachment;
-    std::unique_ptr<ButtonAttachment> truePeakAttachment, bypassAttachment;
+        releaseAttachment, lookaheadAttachment, stereoLinkAttachment, oversamplingAttachment,
+        multibandAttachment, multibandAmountAttachment, noiseShapingAttachment;
+    std::unique_ptr<ButtonAttachment> truePeakAttachment, bypassAttachment,
+        multibandBoolAttachment, monitorAttachment, aes17Attachment, ispAttachment, meterResetAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ChoiceAttachment> ditherAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HeavenLimitsAudioProcessorEditor)
 };

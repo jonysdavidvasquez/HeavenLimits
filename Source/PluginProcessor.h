@@ -73,7 +73,8 @@ private:
 
     void processAtRate (juce::dsp::AudioBlock<float>& block, double rate,
                         float inputGain, float ceiling, float attackMs,
-                        float releaseMs, float lookaheadMs, float stereoLink);
+                        float releaseMs, float lookaheadMs, float stereoLink,
+                        float multibandAmount, bool multibandEnabled);
     void updateMeters (const juce::AudioBuffer<float>& buffer, float inputPeakLinear) noexcept;
     void configureLufsFilters (double sampleRate) noexcept;
 

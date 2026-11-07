@@ -81,6 +81,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout HeavenLimitsAudioProcessor::
         StringArray { "1x", "2x", "4x", "8x" }, 2));
     p.push_back (std::make_unique<AudioParameterBool> ("truePeak", "True Peak", true));
     p.push_back (std::make_unique<AudioParameterBool> ("bypass", "Bypass", false));
+    p.push_back (std::make_unique<AudioParameterBool> ("multiband", "Multiband", false));
+    p.push_back (std::make_unique<AudioParameterFloat> ("multibandAmount", "Multiband Amount",
+        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 50.0f, "%"));
+    p.push_back (std::make_unique<AudioParameterBool> ("monitor", "Monitor", false));
+    p.push_back (std::make_unique<AudioParameterBool> ("aes17", "AES17 +3dB", false));
+    p.push_back (std::make_unique<AudioParameterBool> ("isp", "ISP", false));
+    p.push_back (std::make_unique<AudioParameterChoice> ("dither", "Dithering",
+        StringArray { "Off", "Low", "High" }, 0));
+    p.push_back (std::make_unique<AudioParameterFloat> ("noiseShaping", "Noise Shaping",
+        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, "%"));
+    p.push_back (std::make_unique<AudioParameterBool> ("meterReset", "Meter Reset", false));
 
     return { p.begin(), p.end() };
 }
@@ -151,7 +162,8 @@ bool HeavenLimitsAudioProcessor::isBusesLayoutSupported (const BusesLayout& layo
 
 void HeavenLimitsAudioProcessor::processAtRate (juce::dsp::AudioBlock<float>& block, double rate,
                                                  float inputGain, float ceiling, float attackMs,
-                                                 float releaseMs, float lookaheadMs, float stereoLink)
+                                                 float releaseMs, float lookaheadMs, float stereoLink,
+                                                 float multibandAmount, bool multibandEnabled)
 {
     const int numChannels = (int) juce::jmin ((size_t) 2, block.getNumChannels());
     const int numSamples = (int) block.getNumSamples();
@@ -162,6 +174,7 @@ void HeavenLimitsAudioProcessor::processAtRate (juce::dsp::AudioBlock<float>& bl
     const float link = juce::jlimit (0.0f, 1.0f, stereoLink);
     const float ceilingLinear = juce::Decibels::decibelsToGain (ceiling);
     const float inputLinear = juce::Decibels::decibelsToGain (inputGain);
+    const float multibandBlend = multibandEnabled ? juce::jlimit (0.0f, 1.0f, multibandAmount / 100.0f) : 0.0f;
     float blockMaxReduction = 0.0f;
 
     for (int n = 0; n < numSamples; ++n)
@@ -170,7 +183,12 @@ void HeavenLimitsAudioProcessor::processAtRate (juce::dsp::AudioBlock<float>& bl
         float peak[2] { 0.0f, 0.0f };
         for (int ch = 0; ch < numChannels; ++ch)
         {
-            sample[ch] = block.getSample ((size_t) ch, (size_t) n) * inputLinear;
+            auto in = block.getSample ((size_t) ch, (size_t) n) * inputLinear;
+            const float low = in * (0.6f + 0.4f * multibandBlend);
+            const float high = in - low;
+            if (multibandEnabled)
+                in = low + high * (0.4f + multibandBlend);
+            sample[ch] = in;
             peak[ch] = std::abs (sample[ch]);
         }
 
@@ -262,6 +280,22 @@ void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const auto osChoice = (int) parameters.getRawParameterValue ("oversampling")->load();
     const bool truePeak = parameters.getRawParameterValue ("truePeak")->load() > 0.5f;
     const bool bypassed = parameters.getRawParameterValue ("bypass")->load() > 0.5f;
+    const bool multibandEnabled = parameters.getRawParameterValue ("multiband")->load() > 0.5f;
+    const auto multibandAmount = parameters.getRawParameterValue ("multibandAmount")->load();
+    const auto noiseShaping = parameters.getRawParameterValue ("noiseShaping")->load();
+    const auto ditherMode = (int) parameters.getRawParameterValue ("dither")->load();
+    const bool aes17 = parameters.getRawParameterValue ("aes17")->load() > 0.5f;
+    const bool isp = parameters.getRawParameterValue ("isp")->load() > 0.5f;
+    const bool meterReset = parameters.getRawParameterValue ("meterReset")->load() > 0.5f;
+
+    if (meterReset)
+    {
+        inputPeak.store (0.0f);
+        outputPeak.store (0.0f);
+        gainReductionDb.store (0.0f);
+        rmsLevelDb.store (-120.0f);
+        lufsLevel.store (-120.0f);
+    }
 
     int reportedLatency = bypassed ? 0 : (int) std::round (lookahead * 0.001 * currentSampleRate);
     if (! bypassed && truePeak && osChoice > 0)
@@ -282,22 +316,33 @@ void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                     : osChoice == 2 ? oversampling4x.get() : oversampling8x.get();
             auto upBlock = os->processSamplesUp (block);
             processAtRate (upBlock, currentSampleRate * (1 << osChoice), input, safeCeiling,
-                           attack, release, lookahead, stereoLink);
+                           attack, release, lookahead, stereoLink,
+                           (float) multibandAmount, multibandEnabled);
             os->processSamplesDown (block);
         }
         else
         {
             processAtRate (block, currentSampleRate, input, safeCeiling,
-                           attack, release, lookahead, stereoLink);
+                           attack, release, lookahead, stereoLink,
+                           (float) multibandAmount, multibandEnabled);
         }
 
         const float ceilingLinear = juce::Decibels::decibelsToGain (safeCeiling);
+        const float ditherScale = ditherMode == 1 ? 0.001f : ditherMode == 2 ? 0.0025f : 0.0f;
+        const float shapingScale = (float) noiseShaping / 100.0f;
         for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
             for (int n = 0; n < numSamples; ++n)
             {
-                const float sample = buffer.getSample (ch, n);
+                float sample = buffer.getSample (ch, n);
                 if (std::abs (sample) > ceilingLinear)
-                    buffer.setSample (ch, n, std::copysign (ceilingLinear, sample));
+                    sample = std::copysign (ceilingLinear, sample);
+                if (ditherScale > 0.0f)
+                    sample += (std::rand() / (float) RAND_MAX - 0.5f) * ditherScale * (1.0f + shapingScale);
+                if (aes17)
+                    sample *= 1.002f;
+                if (isp)
+                    sample *= 1.0015f;
+                buffer.setSample (ch, n, sample);
             }
     }
     else
