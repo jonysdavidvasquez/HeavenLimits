@@ -1,14 +1,55 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <algorithm>
+#include <cmath>
 
 namespace
 {
     constexpr float minusInfinityDb = -100.0f;
 
-    float toDecibels (float value)
+    float toDecibels (float value) noexcept
     {
         return value > 0.000001f ? 20.0f * std::log10 (value) : minusInfinityDb;
     }
+
+    void setHighPass (double sampleRate, double frequency, double q,
+                      double& b0, double& b1, double& b2, double& a1, double& a2)
+    {
+        const auto w0 = 2.0 * juce::MathConstants<double>::pi * frequency / sampleRate;
+        const auto cosine = std::cos (w0);
+        const auto alpha = std::sin (w0) / (2.0 * q);
+        const auto a0 = 1.0 + alpha;
+        b0 = ((1.0 + cosine) * 0.5) / a0;
+        b1 = -(1.0 + cosine) / a0;
+        b2 = b0;
+        a1 = (-2.0 * cosine) / a0;
+        a2 = (1.0 - alpha) / a0;
+    }
+
+    void setHighShelf (double sampleRate, double frequency, double q, double gainDb,
+                       double& b0, double& b1, double& b2, double& a1, double& a2)
+    {
+        const auto a = std::pow (10.0, gainDb / 40.0);
+        const auto w0 = 2.0 * juce::MathConstants<double>::pi * frequency / sampleRate;
+        const auto cosine = std::cos (w0);
+        const auto sine = std::sin (w0);
+        const auto alpha = sine / (2.0 * q);
+        const auto beta = 2.0 * std::sqrt (a) * alpha;
+        const auto a0 = (a + 1.0) - (a - 1.0) * cosine + beta;
+        b0 = (a * ((a + 1.0) + (a - 1.0) * cosine + beta)) / a0;
+        b1 = (-2.0 * a * ((a - 1.0) + (a + 1.0) * cosine)) / a0;
+        b2 = (a * ((a + 1.0) + (a - 1.0) * cosine - beta)) / a0;
+        a1 = (2.0 * ((a - 1.0) - (a + 1.0) * cosine)) / a0;
+        a2 = ((a + 1.0) - (a - 1.0) * cosine - beta) / a0;
+    }
+}
+
+float HeavenLimitsAudioProcessor::Biquad::process (float input) noexcept
+{
+    const auto output = b0 * input + z1;
+    z1 = b1 * input - a1 * output + z2;
+    z2 = b2 * input - a2 * output;
+    return (float) output;
 }
 
 HeavenLimitsAudioProcessor::HeavenLimitsAudioProcessor()
@@ -44,10 +85,30 @@ juce::AudioProcessorValueTreeState::ParameterLayout HeavenLimitsAudioProcessor::
     return { p.begin(), p.end() };
 }
 
+void HeavenLimitsAudioProcessor::configureLufsFilters (double sampleRate) noexcept
+{
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        setHighPass (sampleRate, 38.13547087602444, 0.5003270373238773,
+                     lufsHighPass[(size_t) ch].b0, lufsHighPass[(size_t) ch].b1,
+                     lufsHighPass[(size_t) ch].b2, lufsHighPass[(size_t) ch].a1,
+                     lufsHighPass[(size_t) ch].a2);
+        setHighShelf (sampleRate, 1681.974450955533, 0.7071752369554196, 4.0,
+                      lufsHighShelf[(size_t) ch].b0, lufsHighShelf[(size_t) ch].b1,
+                      lufsHighShelf[(size_t) ch].b2, lufsHighShelf[(size_t) ch].a1,
+                      lufsHighShelf[(size_t) ch].a2);
+        lufsHighPass[(size_t) ch].reset();
+        lufsHighShelf[(size_t) ch].reset();
+    }
+}
+
 void HeavenLimitsAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
     maximumLookaheadSamples = juce::jmax (1, (int) std::ceil (sampleRate * 0.012 * 8.0));
+    meterSmoothing = std::exp (-1.0 / (0.300 * sampleRate));
+    rmsEnergy = lufsEnergy = 0.0;
+    configureLufsFilters (sampleRate);
 
     for (auto& ch : channels)
     {
@@ -96,43 +157,31 @@ void HeavenLimitsAudioProcessor::processAtRate (juce::dsp::AudioBlock<float>& bl
     const int numSamples = (int) block.getNumSamples();
     const int delaySamples = juce::jlimit (0, maximumLookaheadSamples,
         (int) std::round (lookaheadMs * 0.001 * rate));
-
     const float attackCoeff = std::exp (-1.0f / juce::jmax (1.0f, (float) (attackMs * 0.001 * rate)));
     const float releaseCoeff = std::exp (-1.0f / juce::jmax (1.0f, (float) (releaseMs * 0.001 * rate)));
     const float link = juce::jlimit (0.0f, 1.0f, stereoLink);
     const float ceilingLinear = juce::Decibels::decibelsToGain (ceiling);
     const float inputLinear = juce::Decibels::decibelsToGain (inputGain);
-
-    float blockInputPeak = 0.0f;
-    float blockOutputPeak = 0.0f;
     float blockMaxReduction = 0.0f;
 
     for (int n = 0; n < numSamples; ++n)
     {
         float sample[2] { 0.0f, 0.0f };
         float peak[2] { 0.0f, 0.0f };
-
         for (int ch = 0; ch < numChannels; ++ch)
         {
             sample[ch] = block.getSample ((size_t) ch, (size_t) n) * inputLinear;
             peak[ch] = std::abs (sample[ch]);
-            blockInputPeak = juce::jmax (blockInputPeak, peak[ch]);
         }
 
-        float linkedPeak = peak[0];
-        if (numChannels > 1)
-            linkedPeak = juce::jmax (peak[0], peak[1]);
-
+        const float linkedPeak = numChannels > 1 ? juce::jmax (peak[0], peak[1]) : peak[0];
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto& state = channels[(size_t) ch];
             const float detectorPeak = numChannels == 1 ? peak[ch]
-                : (link * linkedPeak + (1.0f - link) * peak[ch]);
-
+                : link * linkedPeak + (1.0f - link) * peak[ch];
             const float targetGain = detectorPeak > ceilingLinear
                 ? ceilingLinear / juce::jmax (detectorPeak, 0.000001f) : 1.0f;
-
-            // Attack controls how quickly gain reduction is applied; release controls recovery.
             const float coeff = targetGain < state.gain ? attackCoeff : releaseCoeff;
             state.gain = targetGain + coeff * (state.gain - targetGain);
 
@@ -142,18 +191,56 @@ void HeavenLimitsAudioProcessor::processAtRate (juce::dsp::AudioBlock<float>& bl
             state.delay[(size_t) state.writePosition] = sample[ch];
             state.writePosition = (state.writePosition + 1) % bufferSize;
 
-            // Zero lookahead uses the current sample. Positive lookahead outputs the delayed sample.
             const float source = delaySamples == 0 ? sample[ch] : delayed;
-            const float out = source * state.gain;
+            float out = source * state.gain;
+            // Final hard guard: the processed sample cannot exceed the configured sample-peak ceiling.
+            if (std::abs (out) > ceilingLinear)
+                out = std::copysign (ceilingLinear, out);
             block.setSample ((size_t) ch, (size_t) n, out);
-            blockOutputPeak = juce::jmax (blockOutputPeak, std::abs (out));
             blockMaxReduction = juce::jmax (blockMaxReduction, -toDecibels (state.gain));
         }
     }
 
-    inputPeak.store (blockInputPeak);
-    outputPeak.store (blockOutputPeak);
     gainReductionDb.store (blockMaxReduction);
+}
+
+void HeavenLimitsAudioProcessor::updateMeters (const juce::AudioBuffer<float>& buffer,
+                                               float inputPeakLinear) noexcept
+{
+    const int numChannels = juce::jmin (2, buffer.getNumChannels());
+    const int numSamples = buffer.getNumSamples();
+    double blockRmsEnergy = 0.0;
+    float peak = 0.0f;
+
+    for (int n = 0; n < numSamples; ++n)
+    {
+        double sampleSquares = 0.0;
+        double weightedSquares = 0.0;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float sample = buffer.getSample (ch, n);
+            peak = juce::jmax (peak, std::abs (sample));
+            sampleSquares += (double) sample * sample;
+            const float weighted = lufsHighShelf[(size_t) ch].process (
+                lufsHighPass[(size_t) ch].process (sample));
+            weightedSquares += (double) weighted * weighted;
+        }
+
+        const double channelCount = (double) juce::jmax (1, numChannels);
+        const double sampleMeanSquare = sampleSquares / channelCount;
+        rmsEnergy = meterSmoothing * rmsEnergy + (1.0 - meterSmoothing) * sampleMeanSquare;
+        lufsEnergy = meterSmoothing * lufsEnergy + (1.0 - meterSmoothing) * weightedSquares;
+        blockRmsEnergy += sampleMeanSquare;
+    }
+
+    inputPeak.store (inputPeakLinear);
+    outputPeak.store (peak);
+    if (numSamples > 0)
+    {
+        rmsLevelDb.store ((float) (10.0 * std::log10 (juce::jmax (rmsEnergy, 1.0e-12))));
+        // K-weighted, 300 ms smoothed loudness estimate; gating is not applied.
+        lufsLevel.store ((float) (-0.691 + 10.0 * std::log10 (juce::jmax (lufsEnergy, 1.0e-12))));
+    }
 }
 
 void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -163,6 +250,10 @@ void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const int numChannels = buffer.getNumChannels();
     if (numSamples == 0 || numChannels == 0)
         return;
+
+    float rawInputPeak = 0.0f;
+    for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
+        rawInputPeak = juce::jmax (rawInputPeak, buffer.getMagnitude (ch, 0, numSamples));
 
     const auto input = parameters.getRawParameterValue ("input")->load();
     const auto ceiling = parameters.getRawParameterValue ("ceiling")->load();
@@ -174,9 +265,8 @@ void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     const bool truePeak = parameters.getRawParameterValue ("truePeak")->load() > 0.5f;
     const bool bypassed = parameters.getRawParameterValue ("bypass")->load() > 0.5f;
 
-    // Report fixed processing latency to the host: lookahead plus oversampling filter latency.
-    int reportedLatency = (int) std::round (lookahead * 0.001 * currentSampleRate);
-    if (truePeak && osChoice > 0)
+    int reportedLatency = bypassed ? 0 : (int) std::round (lookahead * 0.001 * currentSampleRate);
+    if (! bypassed && truePeak && osChoice > 0)
     {
         auto* latencyOS = osChoice == 1 ? oversampling2x.get()
                        : osChoice == 2 ? oversampling4x.get() : oversampling8x.get();
@@ -184,32 +274,41 @@ void HeavenLimitsAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     }
     setLatencySamples (reportedLatency);
 
-    if (bypassed)
+    if (! bypassed)
     {
-        inputPeak.store (buffer.getMagnitude (0, numSamples));
-        outputPeak.store (buffer.getMagnitude (0, numSamples));
-        gainReductionDb.store (0.0f);
-        return;
-    }
+        juce::dsp::AudioBlock<float> block (buffer);
+        const float safeCeiling = juce::jmin (ceiling, 0.0f);
+        if (truePeak && osChoice > 0)
+        {
+            auto* os = osChoice == 1 ? oversampling2x.get()
+                    : osChoice == 2 ? oversampling4x.get() : oversampling8x.get();
+            auto upBlock = os->processSamplesUp (block);
+            processAtRate (upBlock, currentSampleRate * (1 << osChoice), input, safeCeiling,
+                           attack, release, lookahead, stereoLink);
+            os->processSamplesDown (block);
+        }
+        else
+        {
+            processAtRate (block, currentSampleRate, input, safeCeiling,
+                           attack, release, lookahead, stereoLink);
+        }
 
-    juce::dsp::AudioBlock<float> block (buffer);
-    const float safeCeiling = juce::jmin (ceiling, 0.0f);
-
-    if (truePeak && osChoice > 0)
-    {
-        auto* os = osChoice == 1 ? oversampling2x.get()
-                : osChoice == 2 ? oversampling4x.get() : oversampling8x.get();
-
-        auto upBlock = os->processSamplesUp (block);
-        processAtRate (upBlock, currentSampleRate * (1 << osChoice), input, safeCeiling,
-                       attack, release, lookahead, stereoLink);
-        os->processSamplesDown (block);
+        // The downsampling filter can create new sample peaks, so guard the final output too.
+        const float ceilingLinear = juce::Decibels::decibelsToGain (safeCeiling);
+        for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
+            for (int n = 0; n < numSamples; ++n)
+            {
+                const float sample = buffer.getSample (ch, n);
+                if (std::abs (sample) > ceilingLinear)
+                    buffer.setSample (ch, n, std::copysign (ceilingLinear, sample));
+            }
     }
     else
     {
-        processAtRate (block, currentSampleRate, input, safeCeiling,
-                       attack, release, lookahead, stereoLink);
+        gainReductionDb.store (0.0f);
     }
+
+    updateMeters (buffer, rawInputPeak);
 }
 
 juce::AudioProcessorEditor* HeavenLimitsAudioProcessor::createEditor()

@@ -38,6 +38,8 @@ public:
     float getInputPeak() const noexcept { return inputPeak.load(); }
     float getOutputPeak() const noexcept { return outputPeak.load(); }
     float getGainReductionDb() const noexcept { return gainReductionDb.load(); }
+    float getRmsLevelDb() const noexcept { return rmsLevelDb.load(); }
+    float getLufsLevel() const noexcept { return lufsLevel.load(); }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -49,15 +51,31 @@ private:
         float gain = 1.0f;
     };
 
+    struct Biquad
+    {
+        double b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0;
+        double z1 = 0.0, z2 = 0.0;
+        float process (float input) noexcept;
+        void reset() noexcept { z1 = z2 = 0.0; }
+    };
+
     std::array<ChannelState, 2> channels;
+    std::array<Biquad, 2> lufsHighPass, lufsHighShelf;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampling2x, oversampling4x, oversampling8x;
     double currentSampleRate = 44100.0;
     int maximumLookaheadSamples = 1;
+    double rmsEnergy = 0.0;
+    double lufsEnergy = 0.0;
+    double meterSmoothing = 0.0;
+
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, gainReductionDb { 0.0f };
+    std::atomic<float> rmsLevelDb { -120.0f }, lufsLevel { -120.0f };
 
     void processAtRate (juce::dsp::AudioBlock<float>& block, double rate,
                         float inputGain, float ceiling, float attackMs,
                         float releaseMs, float lookaheadMs, float stereoLink);
+    void updateMeters (const juce::AudioBuffer<float>& buffer, float inputPeakLinear) noexcept;
+    void configureLufsFilters (double sampleRate) noexcept;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HeavenLimitsAudioProcessor)
 };
