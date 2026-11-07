@@ -45,7 +45,7 @@ private:
     VintageKnob inputGain, ceiling, attack, release, lookahead, stereoLink, multibandAmount, noiseShaping;
     juce::ComboBox oversampling, dither;
     LedToggleButton truePeak { "TRUE PEAK" }, bypass { "BYPASS" }, multiband { "MULTIBAND" },
-                    monitor { "MONITOR" }, aes17 { "AES17 +3" }, isp { "ISP" }, meterReset { "RESET" };
+                    aes17 { "AES17 +3" }, isp { "ISP" };
     juce::Label inputLabel, ceilingLabel, attackLabel, releaseLabel, lookaheadLabel, stereoLinkLabel,
                 oversamplingLabel, rmsLabel, lufsLabel, multibandLabel, ditherLabel, noiseLabel;
     juce::Label inputValue, ceilingValue, attackValue, releaseValue, lookaheadValue, stereoLinkValue,
@@ -60,6 +60,6 @@ private:
         lookaheadAttachment, stereoLinkAttachment, multibandAmountAttachment, noiseShapingAttachment;
     std::unique_ptr<ComboAttachment> oversamplingAttachment, ditherAttachment;
     std::unique_ptr<ButtonAttachment> truePeakAttachment, bypassAttachment, multibandAttachment,
-        monitorAttachment, aes17Attachment, ispAttachment, meterResetAttachment;
+        aes17Attachment, ispAttachment;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HeavenLimitsAudioProcessorEditor)
 };

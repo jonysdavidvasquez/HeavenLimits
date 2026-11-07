@@ -106,7 +106,9 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     for (auto* label : { &oversamplingLabel, &ditherLabel, &rmsLabel, &lufsLabel })
         addAndMakeVisible (*label);
 
-    for (auto* button : { &truePeak, &bypass, &multiband, &monitor, &aes17, &isp, &meterReset })
+    // Monitor and meter reset remain available as processor parameters, but are intentionally
+    // omitted from this UI as requested. No audio processing or parameter behavior is changed here.
+    for (auto* button : { &truePeak, &bypass, &multiband, &aes17, &isp })
         styleLedButton (*button);
 
     for (auto* label : { &inputValue, &ceilingValue, &attackValue, &releaseValue, &lookaheadValue,
@@ -139,23 +141,8 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     truePeakAttachment = attachButton (truePeak, "truePeak");
     bypassAttachment = attachButton (bypass, "bypass");
     multibandAttachment = attachButton (multiband, "multiband");
-    monitorAttachment = attachButton (monitor, "monitor");
     aes17Attachment = attachButton (aes17, "aes17");
     ispAttachment = attachButton (isp, "isp");
-    meterResetAttachment = attachButton (meterReset, "meterReset");
-
-    meterReset.onClick = [this]
-    {
-        auto* parameter = processor.parameters.getParameter ("meterReset");
-        parameter->beginChangeGesture();
-        parameter->setValueNotifyingHost (1.0f);
-        parameter->endChangeGesture();
-        juce::Timer::callAfterDelay (100, [this]
-        {
-            if (auto* reset = processor.parameters.getParameter ("meterReset"))
-                reset->setValueNotifyingHost (0.0f);
-        });
-    };
     startTimerHz (20);
 }
 
@@ -164,10 +151,9 @@ void HeavenLimitsAudioProcessorEditor::styleKnob (juce::Slider& slider, juce::La
 {
     setupLabel (label, name, 10.0f);
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 64, 16);
+    // Use the separate value label below each knob; avoid a second JUCE textbox value.
+    slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.setTextValueSuffix (suffix);
-    slider.setColour (juce::Slider::textBoxTextColourId, ink);
-    slider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0x778da1b3));
     addAndMakeVisible (slider);
     addAndMakeVisible (label);
 }
@@ -184,7 +170,9 @@ void HeavenLimitsAudioProcessorEditor::LedToggleButton::paintButton (juce::Graph
     g.setColour (down ? juce::Colour (0xff263946) : over ? juce::Colour (0xff344b5c) : juce::Colour (0xff1a2934));
     g.fillRoundedRectangle (bounds, 5.0f);
     auto led = juce::Rectangle<float> (bounds.getX() + 6, bounds.getCentreY() - 4, 8, 8);
-    auto colour = getToggleState() ? juce::Colour (0xff56f28d) : juce::Colour (0xff48545d);
+    const bool bypassButton = getButtonText() == "BYPASS";
+    auto colour = getToggleState() ? (bypassButton ? juce::Colour (0xffff3838) : juce::Colour (0xff56f28d))
+                                   : juce::Colour (0xff48545d);
     g.setColour (colour.withAlpha (0.35f));
     g.fillEllipse (led.expanded (2.0f));
     g.setColour (colour);
@@ -255,12 +243,18 @@ void HeavenLimitsAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillAll (juce::Colour (0xff101820));
     g.setGradientFill (juce::ColourGradient (metalTop, 0, 0, metalDark, 0, bounds.getBottom(), false));
     g.fillRoundedRectangle (bounds.reduced (6), 10);
-    g.setColour (ink); g.setFont (juce::Font (juce::FontOptions (25, juce::Font::bold)));
-    g.drawText ("HEAVEN LIMITS", 215, 5, 470, 30, juce::Justification::centred);
-    g.setFont (juce::Font (juce::FontOptions (9, juce::Font::bold)));
-    g.drawText ("STEREO BRICKWALL MAXIMIZER  •  Powered By TILADCO", 200, 36, 500, 18, juce::Justification::centred);
-    g.setColour (juce::Colour (0x8843586d)); g.drawLine (18, 62, 882, 62, 1); g.drawLine (18, 480, 882, 480, 1);
-    drawScrew (g, { 17, 17 }); drawScrew (g, { 883, 17 }); drawScrew (g, { 17, 483 }); drawScrew (g, { 883, 483 });
+    g.setColour (ink);
+    g.setFont (juce::Font (juce::FontOptions (25, juce::Font::bold)));
+    g.drawText ("HEAVEN LIMITS", 215, 4, 470, 29, juce::Justification::centred);
+    g.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
+    g.drawText ("STEREO BRICKWALL MAXIMIZER", 200, 34, 500, 13, juce::Justification::centred);
+    g.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
+    g.drawText ("Powered By TILADCO", 200, 47, 500, 12, juce::Justification::centred);
+    g.setColour (juce::Colour (0x8843586d));
+    g.drawLine (18, 65, 882, 65, 1);
+    g.drawLine (18, 480, 882, 480, 1);
+    drawScrew (g, { 17, 17 }); drawScrew (g, { 883, 17 });
+    drawScrew (g, { 17, 483 }); drawScrew (g, { 883, 483 });
 }
 
 void HeavenLimitsAudioProcessorEditor::resized()
@@ -271,25 +265,23 @@ void HeavenLimitsAudioProcessorEditor::resized()
     ceilingLabel.setBounds (650, 75, 130, 16); ceiling.setBounds (655, 90, 120, 120); ceilingValue.setBounds (658, 210, 116, 16);
     grMeter.setBounds (365, 95, 170, 75);
 
-    attackLabel.setBounds (100, 245, 85, 16); attack.setBounds (100, 259, 85, 90); attackValue.setBounds (100, 349, 85, 16);
-    releaseLabel.setBounds (188, 245, 85, 16); release.setBounds (188, 259, 85, 90); releaseValue.setBounds (188, 349, 85, 16);
-    lookaheadLabel.setBounds (276, 245, 85, 16); lookahead.setBounds (276, 259, 85, 90); lookaheadValue.setBounds (276, 349, 85, 16);
-    stereoLinkLabel.setBounds (364, 245, 85, 16); stereoLink.setBounds (364, 259, 85, 90); stereoLinkValue.setBounds (364, 349, 85, 16);
-    multibandLabel.setBounds (452, 245, 110, 16); multibandAmount.setBounds (462, 259, 90, 90); multibandValue.setBounds (462, 349, 90, 16);
+    attackLabel.setBounds (100, 245, 85, 16); attack.setBounds (100, 259, 85, 75); attackValue.setBounds (100, 334, 85, 16);
+    releaseLabel.setBounds (188, 245, 85, 16); release.setBounds (188, 259, 85, 75); releaseValue.setBounds (188, 334, 85, 16);
+    lookaheadLabel.setBounds (276, 245, 85, 16); lookahead.setBounds (276, 259, 85, 75); lookaheadValue.setBounds (276, 334, 85, 16);
+    stereoLinkLabel.setBounds (364, 245, 85, 16); stereoLink.setBounds (364, 259, 85, 75); stereoLinkValue.setBounds (364, 334, 85, 16);
+    multibandLabel.setBounds (452, 245, 110, 16); multibandAmount.setBounds (462, 259, 90, 75); multibandValue.setBounds (462, 334, 90, 16);
 
     oversamplingLabel.setBounds (560, 245, 100, 16); oversampling.setBounds (560, 263, 100, 24);
     ditherLabel.setBounds (560, 291, 100, 16); dither.setBounds (560, 309, 100, 24);
-    noiseLabel.setBounds (560, 337, 100, 16); noiseShaping.setBounds (565, 350, 90, 72); noiseValue.setBounds (565, 421, 90, 15);
+    noiseLabel.setBounds (560, 337, 100, 16); noiseShaping.setBounds (565, 350, 90, 60); noiseValue.setBounds (565, 410, 90, 15);
     rmsLabel.setBounds (665, 250, 130, 14); rmsValue.setBounds (665, 265, 130, 18);
     lufsLabel.setBounds (665, 291, 130, 14); lufsValue.setBounds (665, 306, 130, 18);
 
-    // Two compact rows below all meters; keep every button inside the panel and clear of the output meter.
-    const int buttonY1 = 432, buttonY2 = 460, buttonW = 155, buttonH = 22;
-    multiband.setBounds (100, buttonY1, buttonW, buttonH);
-    truePeak.setBounds (270, buttonY1, buttonW, buttonH);
-    bypass.setBounds (440, buttonY1, buttonW, buttonH);
-    monitor.setBounds (610, buttonY1, buttonW, buttonH);
-    aes17.setBounds (100, buttonY2, buttonW, buttonH);
-    isp.setBounds (270, buttonY2, buttonW, buttonH);
-    meterReset.setBounds (440, buttonY2, buttonW, buttonH);
+    // Utility controls are kept in two clear rows below the meters, not underneath them.
+    constexpr int buttonHeight = 20;
+    multiband.setBounds (130, 438, 160, buttonHeight);
+    truePeak.setBounds (370, 438, 160, buttonHeight);
+    bypass.setBounds (610, 438, 160, buttonHeight);
+    aes17.setBounds (250, 463, 160, buttonHeight);
+    isp.setBounds (490, 463, 160, buttonHeight);
 }
