@@ -4,6 +4,9 @@
 namespace
 {
     const juce::Colour ink (0xff101820), red (0xffff3838), metalTop (0xffd8e3ee), metalDark (0xff718ba5);
+    const juce::Colour meterOrange (0xffff9f1c);
+    const juce::Colour meterMint (0xff35e0c1);
+    const juce::Colour meterViolet (0xffc33ce6);
 
     void setupLabel (juce::Label& label, const juce::String& text, float size = 10.0f)
     {
@@ -219,7 +222,7 @@ void HeavenLimitsAudioProcessorEditor::LedMeter::paint (juce::Graphics& g)
     for (int i = 0; i < count; ++i)
     {
         const int fromBottom = count - 1 - i;
-        auto colour = fromBottom > 15 ? juce::Colour (0xff22d65b) : fromBottom > 7 ? juce::Colour (0xffd8e62d) : juce::Colour (0xffff493c);
+        const auto colour = fromBottom > 15 ? meterOrange : fromBottom > 7 ? meterMint : meterViolet;
         auto segment = juce::Rectangle<float> ((float) area.getX(), area.getY() + i * (h + gap), (float) area.getWidth(), h);
         g.setColour (i >= count - lit ? colour : juce::Colour (0xff28343e));
         g.fillRoundedRectangle (segment, 1.0f);
@@ -234,7 +237,24 @@ void HeavenLimitsAudioProcessorEditor::GainReductionMeter::paint (juce::Graphics
     g.setColour (juce::Colours::white); g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
     g.drawText ("GAIN REDUCTION", getLocalBounds().removeFromTop (20), juce::Justification::centred);
     g.setColour (red); g.setFont (juce::Font (juce::FontOptions (22.0f, juce::Font::bold)));
-    g.drawText (juce::String (-reduction, 1) + " dB", getLocalBounds().withTrimmedTop (18).withTrimmedBottom (12), juce::Justification::centred);
+    g.drawText (juce::String (-reduction, 1) + " dB",
+                getLocalBounds().withTrimmedTop (18).withTrimmedBottom (22), juce::Justification::centred);
+
+    // Horizontal segmented reduction meter: the active segment count follows the same dB value above.
+    auto bar = bounds.reduced (9.0f, 0.0f).withHeight (10.0f).withY (bounds.getBottom() - 15.0f);
+    constexpr int segments = 24;
+    constexpr float segmentGap = 2.0f;
+    const float segmentWidth = (bar.getWidth() - segmentGap * (segments - 1)) / (float) segments;
+    const int active = juce::jlimit (0, segments, (int) std::round (reduction / 24.0f * segments));
+    for (int i = 0; i < segments; ++i)
+    {
+        auto segment = juce::Rectangle<float> (bar.getX() + i * (segmentWidth + segmentGap), bar.getY(),
+                                                segmentWidth, bar.getHeight());
+        g.setColour (i < active ? meterViolet : juce::Colour (0xff34323b));
+        g.fillRoundedRectangle (segment, 1.0f);
+        g.setColour (juce::Colour (0xff625a68));
+        g.drawRoundedRectangle (segment, 1.0f, 0.5f);
+    }
 }
 
 void HeavenLimitsAudioProcessorEditor::paint (juce::Graphics& g)
