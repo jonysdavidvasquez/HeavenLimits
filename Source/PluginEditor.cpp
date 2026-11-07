@@ -85,7 +85,6 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     styleKnob (multibandAmount, multibandLabel, "MULTIBAND AMOUNT", "%");
     styleKnob (noiseShaping, noiseLabel, "NOISE SHAPING", "%");
 
-    // ComboBoxAttachment maps parameter choice indices to item IDs starting at 1.
     oversampling.addItem ("1x", 1);
     oversampling.addItem ("2x", 2);
     oversampling.addItem ("4x", 3);
@@ -109,8 +108,6 @@ HeavenLimitsAudioProcessorEditor::HeavenLimitsAudioProcessorEditor (HeavenLimits
     for (auto* label : { &oversamplingLabel, &ditherLabel, &rmsLabel, &lufsLabel })
         addAndMakeVisible (*label);
 
-    // Monitor and meter reset remain available as processor parameters, but are intentionally
-    // omitted from this UI as requested. No audio processing or parameter behavior is changed here.
     for (auto* button : { &truePeak, &bypass, &multiband, &aes17, &isp })
         styleLedButton (*button);
 
@@ -154,7 +151,6 @@ void HeavenLimitsAudioProcessorEditor::styleKnob (juce::Slider& slider, juce::La
 {
     setupLabel (label, name, 10.0f);
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    // Use the separate value label below each knob; avoid a second JUCE textbox value.
     slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     slider.setTextValueSuffix (suffix);
     addAndMakeVisible (slider);
@@ -240,17 +236,20 @@ void HeavenLimitsAudioProcessorEditor::GainReductionMeter::paint (juce::Graphics
     g.drawText (juce::String (-reduction, 1) + " dB",
                 getLocalBounds().withTrimmedTop (18).withTrimmedBottom (22), juce::Justification::centred);
 
-    // Horizontal segmented reduction meter: the active segment count follows the same dB value above.
+    // 12-segment scale, 0-12 dB. Fill starts at the right and progresses to the left.
     auto bar = bounds.reduced (9.0f, 0.0f).withHeight (10.0f).withY (bounds.getBottom() - 15.0f);
-    constexpr int segments = 24;
+    constexpr int segments = 12;
     constexpr float segmentGap = 2.0f;
     const float segmentWidth = (bar.getWidth() - segmentGap * (segments - 1)) / (float) segments;
-    const int active = juce::jlimit (0, segments, (int) std::round (reduction / 24.0f * segments));
+    const int active = juce::jlimit (0, segments, (int) std::round (reduction));
     for (int i = 0; i < segments; ++i)
     {
         auto segment = juce::Rectangle<float> (bar.getX() + i * (segmentWidth + segmentGap), bar.getY(),
                                                 segmentWidth, bar.getHeight());
-        g.setColour (i < active ? meterViolet : juce::Colour (0xff34323b));
+        const int distanceFromRight = segments - 1 - i;
+        const auto colour = distanceFromRight < 4 ? meterViolet
+                          : distanceFromRight < 8 ? meterMint : meterOrange;
+        g.setColour (i >= segments - active ? colour : juce::Colour (0xff34323b));
         g.fillRoundedRectangle (segment, 1.0f);
         g.setColour (juce::Colour (0xff625a68));
         g.drawRoundedRectangle (segment, 1.0f, 0.5f);
@@ -297,7 +296,6 @@ void HeavenLimitsAudioProcessorEditor::resized()
     rmsLabel.setBounds (665, 250, 130, 14); rmsValue.setBounds (665, 265, 130, 18);
     lufsLabel.setBounds (665, 291, 130, 14); lufsValue.setBounds (665, 306, 130, 18);
 
-    // Utility controls are kept in two clear rows below the meters, not underneath them.
     constexpr int buttonHeight = 20;
     multiband.setBounds (130, 438, 160, buttonHeight);
     truePeak.setBounds (370, 438, 160, buttonHeight);
