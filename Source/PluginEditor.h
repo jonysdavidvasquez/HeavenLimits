@@ -42,6 +42,7 @@ private:
     void styleLedButton (LedToggleButton&);
 
     HeavenLimitsAudioProcessor& processor;
+    juce::Image homeSoundsLogo;
     VintageKnob inputGain, ceiling, attack, release, lookahead, stereoLink, multibandAmount, noiseShaping;
     juce::ComboBox oversampling, dither;
     LedToggleButton truePeak { "TRUE PEAK" }, bypass { "BYPASS" }, multiband { "MULTIBAND" },
