@@ -16,12 +16,11 @@ private:
     class LedMeter : public juce::Component
     {
     public:
-        LedMeter (juce::String title, bool redAtTop = true) : name (std::move (title)), redTop (redAtTop) {}
+        explicit LedMeter (juce::String title) : name (std::move (title)) {}
         void setLevelDb (float db) { levelDb = juce::jlimit (-60.0f, 0.0f, db); repaint(); }
         void paint (juce::Graphics&) override;
     private:
         juce::String name;
-        bool redTop = true;
         float levelDb = -60.0f;
     };
 
@@ -34,16 +33,24 @@ private:
         float reduction = 0.0f;
     };
 
+    class LedToggleButton : public juce::ToggleButton
+    {
+    public:
+        explicit LedToggleButton (const juce::String& text) : juce::ToggleButton (text) {}
+        void paintButton (juce::Graphics&, bool, bool) override;
+    };
+
     void timerCallback() override;
     void styleKnob (juce::Slider&, juce::Label&, const juce::String&, const juce::String& suffix = {});
-    void styleToggle (juce::ToggleButton&, const juce::String&);
+    void styleLedButton (LedToggleButton&);
 
     HeavenLimitsAudioProcessor& processor;
     juce::Slider inputGain, ceiling, attack, release, lookahead, stereoLink, oversampling;
-    juce::ToggleButton truePeak, bypass;
+    LedToggleButton truePeak { "TRUE PEAK" }, bypass { "BYPASS" };
     juce::Label inputLabel, ceilingLabel, attackLabel, releaseLabel, lookaheadLabel,
-                  stereoLinkLabel, oversamplingLabel, truePeakLabel, bypassLabel;
-    juce::Label inputValue, ceilingValue, attackValue, releaseValue, lookaheadValue, stereoLinkValue;
+                  stereoLinkLabel, oversamplingLabel, rmsLabel, lufsLabel;
+    juce::Label inputValue, ceilingValue, attackValue, releaseValue, lookaheadValue, stereoLinkValue,
+                  rmsValue, lufsValue;
     LedMeter inputMeter { "INPUT" }, outputMeter { "OUTPUT" };
     GainReductionMeter grMeter;
 
